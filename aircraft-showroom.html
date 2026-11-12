@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Three.js 3D 飞机展厅</title>
+<style>
+  /* ================= 页面基础样式 ================= */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; background: #9aa0a6; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* ================= 左上角悬浮控制面板 ================= */
+  #panel {
+    position: fixed; top: 16px; left: 16px; z-index: 20;
+    width: 232px; max-height: calc(100vh - 32px); overflow-y: auto;
+    background: rgba(33, 37, 41, 0.82); color: #e9ecef;
+    backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 14px; padding: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  }
+  #panel h1 { font-size: 15px; font-weight: 700; margin-bottom: 4px; letter-spacing: 1px; }
+  #panel .sub { font-size: 11px; color: #adb5bd; margin-bottom: 12px; line-height: 1.5; word-break: break-all; }
+  .sec { margin-bottom: 12px; }
+  .sec .sec-title { font-size: 11px; color: #868e96; margin-bottom: 6px; border-left: 3px solid #4dabf7; padding-left: 6px; }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  button.ctrl {
+    flex: 1 1 auto; min-width: 92px; cursor: pointer;
+    background: rgba(255,255,255,0.08); color: #dee2e6;
+    border: 1px solid rgba(255,255,255,0.14); border-radius: 8px;
+    padding: 8px 6px; font-size: 12px; line-height: 1.3;
+    transition: background .15s, transform .05s;
+  }
+  button.ctrl:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+  button.ctrl:active:not(:disabled) { transform: scale(0.97); }
+  button.ctrl.active { background: #1c7ed6; border-color: #4dabf7; color: #fff; }
+  button.ctrl:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* ================= 加载提示 ================= */
+  #loading {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    background: rgba(40, 44, 52, 0.92); color: #f1f3f5;
+  }
+  #loading.hidden { display: none; }
+  .spinner {
+    width: 46px; height: 46px; border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.18); border-top-color: #4dabf7;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loadText { font-size: 14px; }
+  #progressWrap { width: 260px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.15); overflow: hidden; }
+  #progressBar { width: 0%; height: 100%; background: #4dabf7; transition: width .2s; }
+  #loadError {
+    display: none; max-width: 420px; text-align: center; color: #ff8787;
+    font-size: 13px; line-height: 1.7; background: rgba(255,255,255,0.06);
+    padding: 14px 18px; border-radius: 10px;
+  }
+  #loadError.show { display: block; }
+  #retryBtn { margin-top: 10px; }
+
+  /* ================= 轻提示 & 底部状态栏 ================= */
+  #toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-12px);
+    z-index: 40; background: rgba(20,23,26,0.88); color: #fff; font-size: 13px;
+    padding: 10px 20px; border-radius: 999px; opacity: 0; pointer-events: none;
+    transition: opacity .25s, transform .25s; max-width: 70vw;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #statusBar {
+    position: fixed; left: 16px; bottom: 14px; z-index: 20;
+    font-size: 11px; color: #495057; background: rgba(255,255,255,0.72);
+    padding: 6px 12px; border-radius: 999px; backdrop-filter: blur(6px);
+    line-height: 1.5;
+  }
+
+  /* ================= 帮助弹层 ================= */
+  #help {
+    position: fixed; inset: 0; z-index: 60; display: none;
+    background: rgba(0,0,0,0.55); align-items: center; justify-content: center; padding: 20px;
+  }
+  #help.show { display: flex; }
+  #helpCard {
+    background: #2b2f36; color: #dce0e5; border-radius: 14px;
+    width: min(680px, 100%); max-height: 86vh; overflow-y: auto; padding: 24px 26px;
+    font-size: 13px; line-height: 1.85;
+  }
+  #helpCard h2 { font-size: 17px; margin-bottom: 10px; color: #74c0fc; }
+  #helpCard h3 { font-size: 14px; margin: 14px 0 6px; color: #a5d8ff; }
+  #helpCard code { background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  #helpCard ul { padding-left: 20px; }
+  #helpCard a { color: #74c0fc; }
+  #helpClose { margin-top: 16px; width: 100%; padding: 9px; }
+</style>
+
+<!--
+/* ============================================================================
+ * ✎ 模型替换位置：打开本文件，搜索「CONFIG 配置区」，修改 CONFIG.model.url
+ *   - 要求：直链 .glb / .gltf，且响应头带 Access-Control-Allow-Origin（CORS 开放）
+ *   - 主地址加载失败时会自动尝试 CONFIG.model.fallbackUrl，再失败则使用内置程序化解说机
+ * ============================================================================
+-->
+</head>
+<body>
+<div id="app"></div>
+
+<!-- 加载提示层 -->
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="loadText">正在加载飞机模型…</div>
+  <div id="progressWrap"><div id="progressBar"></div></div>
+  <div id="loadError">
+    <div id="loadErrorMsg"></div>
+    <button class="ctrl" id="retryBtn">重新加载</button>
+  </div>
+</div>
+
+<!-- 左上角悬浮控制面板 -->
+<div id="panel">
+  <h1>✈ 3D 飞机展厅</h1>
+  <div class="sub" id="modelUrlText"></div>
+
+  <div class="sec">
+    <div class="sec-title">视角控制</div>
+    <div class="btn-row">
+      <button class="ctrl" id="btnResetView">重置视角</button>
+      <button class="ctrl" id="btnXRay">半透明透视</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">动力系统</div>
+    <div class="btn-row">
+      <button class="ctrl" id="btnEngine">启动引擎</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">起落架 / 灯光</div>
+    <div class="btn-row">
+      <button class="ctrl" id="btnGear" disabled>收起起落架</button>
+      <button class="ctrl" id="btnNavLight">航行灯 关</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">飞行姿态演示</div>
+    <div class="btn-row">
+      <button class="ctrl" id="btnFlightDemo">开始演示</button>
+      <button class="ctrl" id="btnLevel">一键回正</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="btn-row"><button class="ctrl" id="btnHelp">使用说明 / 模型替换</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="statusBar">等待加载…</div>
+
+<!-- 帮助 / 模型替换说明弹层 -->
+<div id="help">
+  <div id="helpCard">
+    <h2>使用说明</h2>
+    <ul>
+      <li><b>鼠标左键拖动</b>：360° 环绕观察；<b>滚轮</b>：缩放；<b>右键拖动</b>：平移</li>
+      <li><b>半透明透视</b>：机身变半透明，可观察内部结构，再次点击恢复</li>
+      <li><b>启动引擎</b>：螺旋桨/风扇叶片旋转、喷口发光、尾焰粒子喷出；自动按节点名称匹配引擎，匹配失败有兜底方案</li>
+      <li><b>起落架</b>：平滑收放动画（模型无起落架节点时按钮自动禁用）</li>
+      <li><b>航行灯</b>：左机翼红色、右机翼绿色、尾部白色双闪频闪</li>
+      <li><b>姿态演示</b>：俯仰 / 滚转 / 偏航循环动画，「一键回正」立即恢复水平姿态</li>
+    </ul>
+
+    <h3>如何替换飞机模型</h3>
+    <ul>
+      <li>打开本文件，搜索 <code>CONFIG 配置区</code>，把 <code>CONFIG.model.url</code> 改成新的 GLB 直链即可；<code>fallbackUrl</code> 为备用地址</li>
+      <li>模型必须是 <b>.glb / .gltf 直链</b> 且服务器开启 CORS（响应头含 <code>Access-Control-Allow-Origin: *</code>）</li>
+      <li>GitHub 文件可用前缀转直链：<code>https://raw.githubusercontent.com/用户名/仓库/分支/路径.glb</code>，或经 <code>https://cdn.jsdelivr.net/gh/用户名/仓库@分支/路径.glb</code> 加速</li>
+      <li>若模型机头朝向不对，修改 <code>CONFIG.model.frontAxis</code>（可选 <code>'+z' '-z' '+x' '-x'</code>）</li>
+      <li>引擎/起落架按名称关键字自动匹配（propeller、blade、engine、gear、wheel 等），命名规范的模型可直接获得全部特效</li>
+    </ul>
+
+    <h3>免费 GLB 飞机模型网站</h3>
+    <ul>
+      <li><b>Poly Pizza</b> — <a href="https://poly.pizza" target="_blank" rel="noopener">poly.pizza</a>：大量 CC 协议低模，提供 CORS 友好的 CDN 直链</li>
+      <li><b>Sketchfab</b> — <a href="https://sketchfab.com" target="_blank" rel="noopener">sketchfab.com</a>：筛选「Downloadable + GLB」，下载后自行托管</li>
+      <li><b>Quaternius</b> — <a href="https://quaternius.com" target="_blank" rel="noopener">quaternius.com</a>：CC0 免费商用飞行器素材包</li>
+      <li><b>Kenney</b> — <a href="https://kenney.nl" target="_blank" rel="noopener">kenney.nl</a>：CC0 通用载具素材，含飞机</li>
+      <li><b>GitHub 开源资产库</b>：BabylonJS/Assets、KhronosGroup/glTF-Sample-Models，raw 与 jsDelivr 链接均自带 CORS</li>
+    </ul>
+
+    <h3>file:// 双击跨域问题 & 本地静态服务</h3>
+    <p>本页使用 ES Module + 远程模型，个别浏览器在 <code>file://</code> 协议下会拦截模块或模型请求。
+    如双击打开后白屏或模型加载失败，请在文件所在目录启动静态服务器后访问
+    <code>http://localhost:8080/aircraft-showroom.html</code>：</p>
+    <ul>
+      <li>Python（推荐，自带）：<code>python -m http.server 8080</code></li>
+      <li>Node.js：<code>npx serve .</code> 或 <code>npx http-server -p 8080</code></li>
+      <li>VS Code：安装「Live Server」插件，右键 Go Live</li>
+    </ul>
+    <button class="ctrl" id="helpClose">关闭</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ============================================================================
+ * ===========================  CONFIG 配置区  ================================
+ *  所有可调参数集中在此，中文注释说明；修改本区块即可定制效果，无需动业务代码
+ * ========================================================================== */
+const CONFIG = {
+  model: {
+    // ✎ 主模型地址：CORS 开放、免登录的在线 GLB 直链（替换飞机只改这里）
+    url: 'https://raw.githubusercontent.com/BabylonJS/Assets/master/meshes/aerobatic_plane.glb',
+    // 备用地址：主地址失败时自动尝试（jsDelivr 镜像，国内访问更稳）
+    fallbackUrl: 'https://cdn.jsdelivr.net/gh/BabylonJS/Assets@master/meshes/aerobatic_plane.glb',
+    frontAxis: '+z',          // 机头朝向：'+z' / '-z' / '+x' / '-x'，火焰与航行灯依此定位
+    fitSize: 6,               // 模型适配后的统一包围尺寸（米），保证任意模型大小合适
+    groundOffset: 0.15        // 模型最低点距地面的间隙
+  },
+  scene: {
+    bgColor: 0x9aa0a6,        // 展厅灰背景色
+    floorColor: 0x82868b,     // 地面灰色
+    gridColor: 0xffffff,      // 网格线颜色
+    gridOpacity: 0.12,        // 网格线透明度
+    fogColor: 0x9aa0a6,       // 雾色（与背景一致，营造展厅纵深）
+    fogNear: 18, fogFar: 55   // 雾的近/远距离
+  },
+  camera: {
+    fov: 50,
+    position: [9, 5.5, 11],   // 初始机位
+    target: [0, 0.6, 0]       // 初始观察点
+  },
+  controls: {
+    enableDamping: true,      // 阻尼惯性，拖动更顺滑
+    dampingFactor: 0.08,
+    minDistance: 3,           // 最近缩放距离
+    maxDistance: 30,          // 最远缩放距离
+    enablePan: true           // 允许右键平移
+  },
+  xray: {
+    opacity: 0.32,            // 半透明透视时机身透明度（0~1）
+    depthWrite: false         // 透视时关闭深度写入，才可看到内部
+  },
+  engine: {
+    spinAxis: 'z',            // 叶片旋转轴：'x' / 'y' / 'z'（螺旋桨飞机一般为 z）
+    spinSpeed: 26,            // 额定转速（弧度/秒）
+    accel: 2.2,               // 启停加减速响应系数，越大越灵敏
+    nozzleColor: 0xff7a18,    // 喷口发光颜色
+    flameColor: 0xffb347,     // 尾焰粒子颜色
+    particleCount: 90,        // 每个引擎的尾焰粒子数量
+    particleSize: 0.16,       // 粒子尺寸
+    particleSpeed: 7.5,       // 粒子后喷速度
+    particleLife: 0.9,        // 粒子寿命（秒），寿命决定火焰长度
+    glowScale: 0.55           // 喷口光晕尺寸（相对模型尺寸的比例）
+  },
+  gear: {
+    duration: 1.4,            // 起落架收/放动画时长（秒）
+    liftRatio: 0.14,          // 收起时上移距离（相对模型尺寸的比例）
+    tiltAngle: 0.55           // 收起时的倾斜弧度
+  },
+  navLight: {
+    sizeRatio: 0.022,         // 灯球尺寸（相对模型尺寸的比例）
+    redColor: 0xff2d2d,       // 左翼航行灯：红
+    greenColor: 0x2bd96b,     // 右翼航行灯：绿
+    tailColor: 0xffffff,      // 尾翼频闪灯：白
+    pulseSpeed: 4,            // 翼灯呼吸频率
+    strobeInterval: 0.9       // 尾灯双闪间隔（秒）
+  },
+  flightDemo: {
+    pitchAmp: 0.38, pitchSpeed: 0.55,   // 俯仰幅度（弧度）与速度
+    rollAmp: 0.65,  rollSpeed: 0.38,    // 滚转幅度与速度
+    yawAmp: 0.45,   yawSpeed: 0.26,     // 偏航幅度与速度
+    levelDamping: 3.2                    // 一键回正的阻尼系数
+  },
+  light: {
+    ambientColor: 0xffffff, ambientIntensity: 0.65,          // 环境光
+    dirColor: 0xffffff,     dirIntensity: 1.6,               // 主方向光
+    dirPosition: [8, 14, 6],                                  // 主方向光位置
+    fillIntensity: 0.35,                                     // 补光强度（弱方向光）
+    shadowMapSize: 2048,                                     // 阴影贴图分辨率
+    shadowCamera: 18                                         // 阴影相机范围
+  }
+};
+
+/* ============================================================================
+ * ============================  基础场景搭建  =================================
+ * ========================================================================== */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(CONFIG.scene.bgColor);
+scene.fog = new THREE.Fog(CONFIG.scene.fogColor, CONFIG.scene.fogNear, CONFIG.scene.fogFar);
+
+const camera = new THREE.PerspectiveCamera(
+  CONFIG.camera.fov, window.innerWidth / window.innerHeight, 0.1, 200
+);
+camera.position.set(...CONFIG.camera.position);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(...CONFIG.camera.target);
+controls.enableDamping = CONFIG.controls.enableDamping;
+controls.dampingFactor = CONFIG.controls.dampingFactor;
+controls.minDistance = CONFIG.controls.minDistance;
+controls.maxDistance = CONFIG.controls.maxDistance;
+controls.enablePan = CONFIG.controls.enablePan;
+controls.update();
+controls.saveState(); // 供「重置视角」恢复
+
+/* ---------- 灯光：环境光 + 方向光 + 阴影 ---------- */
+scene.add(new THREE.AmbientLight(CONFIG.light.ambientColor, CONFIG.light.ambientIntensity));
+
+const dirLight = new THREE.DirectionalLight(CONFIG.light.dirColor, CONFIG.light.dirIntensity);
+dirLight.position.set(...CONFIG.light.dirPosition);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(CONFIG.light.shadowMapSize, CONFIG.light.shadowMapSize);
+dirLight.shadow.camera.left = -CONFIG.light.shadowCamera;
+dirLight.shadow.camera.right = CONFIG.light.shadowCamera;
+dirLight.shadow.camera.top = CONFIG.light.shadowCamera;
+dirLight.shadow.camera.bottom = -CONFIG.light.shadowCamera;
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 50;
+dirLight.shadow.bias = -0.0005;
+scene.add(dirLight);
+
+// 弱补光，让飞机暗面不至于死黑
+const fillLight = new THREE.DirectionalLight(0xdfe7ff, CONFIG.light.fillIntensity);
+fillLight.position.set(-7, 5, -8);
+scene.add(fillLight);
+
+/* ---------- 简约灰色展厅：地面 + 网格 ---------- */
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(40, 64),
+  new THREE.MeshStandardMaterial({ color: CONFIG.scene.floorColor, roughness: 0.95, metalness: 0 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+const grid = new THREE.GridHelper(60, 60, CONFIG.scene.gridColor, CONFIG.scene.gridColor);
+grid.material.transparent = true;
+grid.material.opacity = CONFIG.scene.gridOpacity;
+grid.position.y = 0.01;
+scene.add(grid);
+
+/* ============================================================================
+ * ============================  全局运行时状态  ===============================
+ * ========================================================================== */
+let modelRoot = null;        // 飞机模型根节点
+const flightGroup = new THREE.Group(); // 姿态演示外层节点
+scene.add(flightGroup);
+
+const state = {
+  engineOn: false,           // 引擎开关
+  spinSpeed: 0,              // 当前实际转速（平滑趋近目标值）
+  gearRetracted: false,      // 起落架是否处于收起状态
+  gearProgress: 0,           // 收放进度 0=放下 1=收起
+  navLightOn: false,         // 航行灯开关
+  demoOn: false,             // 姿态演示开关
+  leveling: false,           // 一键回正进行中
+  xrayOn: false              // 透视开关
+};
+
+// 节点匹配结果
+const matched = {
+  rotators: [],    // 螺旋桨/风扇旋转节点
+  gears: [],       // 起落架节点（含初始位姿）
+  engineCenters: [], // 引擎中心世界坐标
+  particleSystems: [],
+  nozzleSprites: [],
+  navLights: { red: null, green: null, tail: null }
+};
+let modelSize = 6; // 模型适配后的尺寸，特效按此比例缩放
+
+/* ---------- 通用工具 ---------- */
+const $ = id => document.getElementById(id);
+let toastTimer = null;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// 机头朝向向量
+function frontVector() {
+  switch (CONFIG.model.frontAxis) {
+    case '-z': return new THREE.Vector3(0, 0, -1);
+    case '+x': return new THREE.Vector3(1, 0, 0);
+    case '-x': return new THREE.Vector3(-1, 0, 0);
+    default:   return new THREE.Vector3(0, 0, 1);
+  }
+}
+
+// 生成径向渐变光晕贴图（喷口/粒子共用）
+function makeGlowTexture(inner, outer) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, inner);
+  g.addColorStop(0.35, outer);
+  g.addColorStop(1, 'rgba(255,120,20,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/* ============================================================================
+ * ===========================  模型加载与容错  ================================
+ * ========================================================================== */
+const loader = new GLTFLoader();
+const loadingEl = $('loading'), loadText = $('loadText'),
+      progressBar = $('progressBar'), loadErrorBox = $('loadError'),
+      loadErrorMsg = $('loadErrorMsg');
+
+function loadGLB(url) {
+  return new Promise((resolve, reject) => {
+    loader.load(url,
+      gltf => resolve(gltf.scene),
+      xhr => {
+        if (xhr.lengthComputable) {
+          const pct = Math.round(xhr.loaded / xhr.total * 100);
+          progressBar.style.width = pct + '%';
+          loadText.textContent = `正在加载飞机模型… ${pct}%`;
+        } else {
+          loadText.textContent = `正在加载飞机模型… ${(xhr.loaded / 1048576).toFixed(1)} MB`;
+        }
+      },
+      err => reject(err)
+    );
+  });
+}
+
+async function startLoad() {
+  loadingEl.classList.remove('hidden');
+  loadErrorBox.classList.remove('show');
+  progressBar.style.width = '0%';
+  try {
+    loadText.textContent = '正在加载主模型地址…';
+    const root = await loadGLB(CONFIG.model.url);
+    await setupModel(root, CONFIG.model.url);
+  } catch (e1) {
+    console.warn('主模型加载失败，尝试备用地址：', e1);
+    try {
+      loadText.textContent = '主地址失败，正在尝试备用地址…';
+      const root = await loadGLB(CONFIG.model.fallbackUrl);
+      toast('主地址失败，已自动切换备用模型地址');
+      await setupModel(root, CONFIG.model.fallbackUrl);
+    } catch (e2) {
+      console.warn('备用模型也失败，启用内置兜底模型：', e2);
+      loadText.textContent = '在线模型均失败，正在生成内置飞机…';
+      const root = buildFallbackPlane();
+      toast('在线模型加载失败，已使用内置程序化解说机');
+      await setupModel(root, '内置程序化兜底模型（离线可用）');
+    }
+  } finally {
+    loadingEl.classList.add('hidden');
+  }
+}
+$('retryBtn').addEventListener('click', startLoad);
+
+/* ============================================================================
+ * ======================  模型居中适配 + 节点自动匹配  ========================
+ * ========================================================================== */
+function setupModel(root, sourceText) {
+  // 清理旧模型（重试场景）
+  if (modelRoot) {
+    flightGroup.remove(modelRoot);
+    disposeObject(modelRoot);
+    resetMatched();
+  }
+
+  modelRoot = root;
+  flightGroup.add(modelRoot);
+
+  /* ---- 1. 阴影开关 ---- */
+  root.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+
+  /* ---- 2. 居中 + 统一缩放适配 ---- */
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  modelSize = Math.max(size.x, size.y, size.z) || 1;
+  const scale = CONFIG.model.fitSize / modelSize;
+  root.scale.setScalar(scale);
+
+  const box2 = new THREE.Box3().setFromObject(root);
+  const center = box2.getCenter(new THREE.Vector3());
+  root.position.sub(center); // 先平移到原点
+  const box3 = new THREE.Box3().setFromObject(root);
+  root.position.y -= box3.min.y - CONFIG.model.groundOffset; // 最低点贴地留缝
+
+  const fittedBox = new THREE.Box3().setFromObject(root);
+  const fittedSize = fittedBox.getSize(new THREE.Vector3());
+  modelSize = Math.max(fittedSize.x, fittedSize.y, fittedSize.z);
+
+  /* ---- 3. 节点名称自动匹配 ---- */
+  matchNodes(root);
+
+  /* ---- 4. 引擎特效兜底：无旋转节点则在引擎位置生成风扇 ---- */
+  if (matched.rotators.length === 0) attachFallbackFans(root);
+  collectEngineCenters(root);
+  buildEngineEffects(root);
+
+  /* ---- 5. 起落架位姿记录（用于平滑收放） ---- */
+  prepareGear(root);
+
+  /* ---- 6. 航行灯（左红右绿 + 尾闪） ---- */
+  buildNavLights(root, fittedBox);
+
+  /* ---- 7. UI 状态 ---- */
+  $('modelUrlText').textContent = '模型：' + sourceText;
+  $('statusBar').textContent =
+    `旋转节点 ${matched.rotators.length} · 引擎 ${matched.engineCenters.length} · 起落架 ${matched.gears.length} · 航行灯 ${state.navLightOn ? '开' : '关'}`;
+  $('btnGear').disabled = matched.gears.length === 0;
+
+  return Promise.resolve();
+}
+
+function resetMatched() {
+  matched.rotators = [];
+  matched.gears = [];
+  matched.engineCenters = [];
+  matched.particleSystems = [];
+  matched.nozzleSprites = [];
+  matched.navLights = { red: null, green: null, tail: null };
+}
+
+function disposeObject(obj) {
+  obj.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
+    }
+  });
+}
+
+/* ---------- 关键字正则：覆盖常见中英模型命名 ---------- */
+const NODE_RE = {
+  prop: /prop|blad|fan|rotor/i,       // 螺旋桨/风扇整体
+  engine: /engine|motor|nacelle|cowling|jet|turbine|thrust|exhaust/i, // 发动机/短舱/喷口
+  gear: /gear|wheel|tire|tyre|landing|strut|undercarriage/i           // 起落架/机轮/支柱
+};
+
+function matchNodes(root) {
+  const rotatorSet = new Set();
+  root.traverse(o => {
+    if ((!o.isMesh && !o.isBone) || !o.name) return;
+
+    // 叶片/螺旋桨 → 向上找到螺旋桨组作为旋转节点；找不到则节点自身旋转
+    // 兼容蒙皮模型（螺旋桨为骨骼节点，如 Propellor_Joint）与普通网格模型
+    if (NODE_RE.prop.test(o.name)) {
+      let node = o, p = o.parent;
+      while (p && p !== root) {
+        if (p.name && NODE_RE.prop.test(p.name)) { node = p; break; }
+        p = p.parent;
+      }
+      rotatorSet.add(node);
+    }
+  });
+  matched.rotators = [...rotatorSet];
+}
+
+/* ---------- 兜底风扇：模型无任何螺旋桨节点时，在机鼻/引擎处装一个 ---------- */
+function attachFallbackFans(root) {
+  root.updateWorldMatrix(true, true); // 确保后续世界→局部换算基于最新矩阵
+  const box = new THREE.Box3().setFromObject(root);
+  const front = frontVector();
+  const nose = box.getCenter(new THREE.Vector3()).add(
+    front.clone().multiplyScalar(modelSize * 0.42)
+  );
+  const fan = new THREE.Group();
+  fan.name = 'Fallback_Fan_Group';
+  fan.userData.isAddon = true;
+
+  const r = modelSize * 0.09;
+  const hub = new THREE.Mesh(
+    new THREE.CylinderGeometry(r * 0.25, r * 0.25, r * 0.5, 12),
+    new THREE.MeshStandardMaterial({ color: 0x33373b, metalness: 0.6, roughness: 0.4 })
+  );
+  hub.rotation.x = Math.PI / 2;
+  fan.add(hub);
+  for (let i = 0; i < 4; i++) {
+    const blade = new THREE.Mesh(
+      new THREE.BoxGeometry(r * 0.28, r * 1.7, r * 0.08),
+      new THREE.MeshStandardMaterial({ color: 0x495057, metalness: 0.7, roughness: 0.3 })
+    );
+    blade.rotation.z = i * Math.PI / 2;
+    blade.position.y = r * 0.55;
+    fan.add(blade);
+  }
+  const local = root.worldToLocal(nose.clone());
+  fan.position.copy(local);
+  fan.castShadow = true;
+  root.add(fan);
+  matched.rotators.push(fan);
+}
+
+/* ---------- 收集引擎中心：引擎节点 → 旋转节点 → 机鼻，三级兜底 ---------- */
+function collectEngineCenters(root) {
+  const centers = [];
+  root.updateWorldMatrix(true, true);
+
+  const engineMeshes = [];
+  root.traverse(o => { if (o.isMesh && o.name && NODE_RE.engine.test(o.name)) engineMeshes.push(o); });
+
+  if (engineMeshes.length) {
+    // 同名引擎只取一次，避免一个引擎的多个零件产生重复喷口
+    const seen = new Set();
+    engineMeshes.forEach(m => {
+      const key = m.name.replace(/[._-]?\d+$/g, '').toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      centers.push(m.getWorldPosition(new THREE.Vector3()));
+    });
+  } else if (matched.rotators.length) {
+    matched.rotators.forEach(r => centers.push(r.getWorldPosition(new THREE.Vector3())));
+  } else {
+    const box = new THREE.Box3().setFromObject(root);
+    centers.push(box.getCenter(new THREE.Vector3()).add(
+      frontVector().multiplyScalar(modelSize * 0.4)
+    ));
+  }
+  matched.engineCenters = centers;
+}
+
+/* ============================================================================
+ * ==========================  引擎特效构建  ==================================
+ * ========================================================================== */
+function buildEngineEffects(root) {
+  const glowTex = makeGlowTexture('rgba(255,230,170,1)', 'rgba(255,122,24,0.85)');
+  const front = frontVector();
+  const baseScale = modelSize * CONFIG.engine.glowScale;
+
+  matched.engineCenters.forEach(center => {
+    const local = root.worldToLocal(center.clone());
+    // 喷口位置略偏机尾方向
+    const nozzlePos = local.clone().add(front.clone().multiplyScalar(-modelSize * 0.06));
+
+    /* ---- 喷口光晕 Sprite ---- */
+    const spriteMat = new THREE.SpriteMaterial({
+      map: glowTex, color: CONFIG.engine.nozzleColor,
+      transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.position.copy(nozzlePos);
+    sprite.scale.setScalar(baseScale);
+    sprite.userData.isAddon = true;
+    sprite.visible = false;
+    root.add(sprite);
+    matched.nozzleSprites.push(sprite);
+
+    /* ---- 尾焰粒子系统 ---- */
+    const N = CONFIG.engine.particleCount;
+    const positions = new Float32Array(N * 3);
+    const velocities = [];
+    const lives = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      positions[i * 3] = nozzlePos.x;
+      positions[i * 3 + 1] = nozzlePos.y;
+      positions[i * 3 + 2] = nozzlePos.z;
+      velocities.push(new THREE.Vector3());
+      lives[i] = Math.random() * CONFIG.engine.particleLife;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      map: glowTex, color: CONFIG.engine.flameColor,
+      size: CONFIG.engine.particleSize, transparent: true, opacity: 0,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true
+    });
+    const points = new THREE.Points(geo, mat);
+    points.userData.isAddon = true;
+    points.frustumCulled = false;
+    root.add(points);
+    matched.particleSystems.push({
+      points, positions, velocities, lives, nozzlePos,
+      rear: front.clone().negate(), mat
+    });
+  });
+}
+
+function resetParticle(sys, i) {
+  const p = sys.nozzlePos;
+  sys.positions[i * 3] = p.x + (Math.random() - 0.5) * modelSize * 0.03;
+  sys.positions[i * 3 + 1] = p.y + (Math.random() - 0.5) * modelSize * 0.03;
+  sys.positions[i * 3 + 2] = p.z + (Math.random() - 0.5) * modelSize * 0.03;
+  // 沿机尾方向喷射，带少量随机扩散
+  sys.velocities[i].copy(sys.rear)
+    .multiplyScalar(CONFIG.engine.particleSpeed * (0.7 + Math.random() * 0.6))
+    .add(new THREE.Vector3(
+      (Math.random() - 0.5) * 1.2,
+      (Math.random() - 0.5) * 1.2,
+      (Math.random() - 0.5) * 1.2
+    ));
+  sys.lives[i] = 0;
+}
+
+/* ============================================================================
+ * ==========================  起落架动画准备  ================================
+ * ========================================================================== */
+function prepareGear(root) {
+  root.updateWorldMatrix(true, true);
+  const gearNodes = [];
+  // 同时支持普通网格模型与蒙皮骨骼模型（如本项目默认 GLB 的机轮骨骼节点）
+  root.traverse(o => {
+    if (!o.name || !(o.isMesh || o.isBone)) return;
+    if (NODE_RE.gear.test(o.name)) gearNodes.push(o);
+  });
+
+  matched.gears = gearNodes.map(m => {
+    const wp = m.getWorldPosition(new THREE.Vector3());
+    return {
+      node: m,
+      isBone: !!m.isBone,
+      basePos: m.position.clone(),
+      baseRot: m.rotation.clone(),
+      side: Math.sign(wp.x) || 1,          // 左右侧决定收起倾斜方向
+      lift: modelSize * CONFIG.gear.liftRatio
+    };
+  });
+}
+
+function easeInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+
+function updateGear(dt) {
+  if (!matched.gears.length) return;
+  const target = state.gearRetracted ? 1 : 0;
+  // 朝目标进度推进，时长由 CONFIG.gear.duration 控制
+  if (Math.abs(state.gearProgress - target) > 0.001) {
+    const dir = Math.sign(target - state.gearProgress);
+    state.gearProgress += dir * dt / CONFIG.gear.duration;
+    state.gearProgress = THREE.MathUtils.clamp(state.gearProgress, 0, 1);
+  }
+  const e = easeInOut(state.gearProgress);
+  matched.gears.forEach(g => {
+    if (g.isBone) {
+      // 骨骼节点：绕本地轴旋转收起（机轮顶点绕关节转动），不改变骨骼位移
+      g.node.rotation.x = g.baseRot.x + g.side * CONFIG.gear.tiltAngle * e;
+    } else {
+      // 普通网格：上移 + 倾斜收进机身
+      g.node.position.copy(g.basePos);
+      g.node.position.y += g.lift * e;
+      g.node.rotation.x = g.baseRot.x + g.side * CONFIG.gear.tiltAngle * e;
+    }
+  });
+}
+
+/* ============================================================================
+ * ==========================  航行灯构建  ====================================
+ * ========================================================================== */
+function buildNavLights(root, box) {
+  const group = new THREE.Group();
+  group.name = 'NavigationLights';
+  group.userData.isAddon = true;
+  group.visible = false;
+  const r = modelSize * CONFIG.navLight.sizeRatio;
+  const midY = box.min.y + (box.max.y - box.min.y) * 0.35;
+  const rearZ = box.min.z; // 包围盒后端（尾翼位置），与具体朝向无关，足够用
+
+  // 包围盒是世界坐标，灯球作为模型子节点必须先换算到模型局部空间
+  const toLocal = v => root.worldToLocal(v.clone());
+  const make = (color, posWorld) => {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 16, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x111111, emissive: color, emissiveIntensity: 0
+      })
+    );
+    m.position.copy(toLocal(posWorld));
+    m.userData.isAddon = true;
+    group.add(m);
+    return m;
+  };
+
+  matched.navLights.red = make(CONFIG.navLight.redColor,
+    new THREE.Vector3(box.min.x, midY, (box.min.z + box.max.z) / 2));
+  matched.navLights.green = make(CONFIG.navLight.greenColor,
+    new THREE.Vector3(box.max.x, midY, (box.min.z + box.max.z) / 2));
+  matched.navLights.tail = make(CONFIG.navLight.tailColor,
+    new THREE.Vector3(0, box.max.y * 0.85, rearZ));
+
+  root.add(group);
+  matched.navLights.group = group;
+}
+
+/* ============================================================================
+ * =====================  内置程序化兜底飞机（离线可用）  ======================
+ *  部件命名刻意包含 Engine / Propeller / LandingGear 关键字，
+ *  使后续匹配管线在兜底模型上同样能跑通全部特效
+ * ========================================================================== */
+function buildFallbackPlane() {
+  const g = new THREE.Group();
+  const matBody = new THREE.MeshStandardMaterial({ color: 0xe9ecef, roughness: 0.5, metalness: 0.25 });
+  const matDark = new THREE.MeshStandardMaterial({ color: 0x495057, roughness: 0.4, metalness: 0.6 });
+
+  // 机身（圆柱沿 Z 轴放置，机头朝 +Z）
+  const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.3, 5.2, 24), matBody);
+  fuselage.rotation.x = Math.PI / 2;
+  fuselage.name = 'Fuselage';
+  g.add(fuselage);
+
+  // 发动机整流罩
+  const cowling = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.42, 0.7, 24), matDark);
+  cowling.rotation.x = Math.PI / 2;
+  cowling.position.z = 2.75;
+  cowling.name = 'Engine_Cowling';
+  g.add(cowling);
+
+  // 螺旋桨组 + 三片桨叶
+  const prop = new THREE.Group();
+  prop.name = 'Propeller_Group';
+  prop.position.z = 3.15;
+  for (let i = 0; i < 3; i++) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.7, 0.06), matDark);
+    blade.name = 'Propeller_Blade_' + i;
+    blade.rotation.z = i * (Math.PI * 2 / 3);
+    blade.position.y = 0.75;
+    prop.add(blade);
+  }
+  g.add(prop);
+
+  // 主翼
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.12, 1.3), matBody);
+  wing.name = 'MainWing';
+  wing.position.set(0, -0.05, -0.4);
+  g.add(wing);
+
+  // 尾翼
+  const tailWing = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.1, 0.7), matBody);
+  tailWing.position.set(0, 0.15, -2.35);
+  g.add(tailWing);
+  const tailFin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.8), matBody);
+  tailFin.position.set(0, 0.65, -2.4);
+  g.add(tailFin);
+
+  // 起落架：前 1 + 主 2，支柱与机轮均带匹配关键字
+  const gearMat = new THREE.MeshStandardMaterial({ color: 0x343a40, roughness: 0.5, metalness: 0.5 });
+  const wheelGeo = new THREE.TorusGeometry(0.22, 0.09, 10, 20);
+  const makeGear = (name, x, y, z) => {
+    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 10), gearMat);
+    strut.name = name + '_Strut';
+    strut.position.set(x, y, z);
+    g.add(strut);
+    const wheel = new THREE.Mesh(wheelGeo, gearMat);
+    wheel.name = name + '_Wheel';
+    wheel.rotation.y = Math.PI / 2;
+    wheel.position.set(x, y - 0.45, z);
+    g.add(wheel);
+  };
+  makeGear('LandingGear_Front', 0, -0.55, 1.9);
+  makeGear('LandingGear_Left', -1.1, -0.5, -0.5);
+  makeGear('LandingGear_Right', 1.1, -0.5, -0.5);
+
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+
+/* ============================================================================
+ * ============================  交互控制  ====================================
+ * ========================================================================== */
+/* ---------- 重置视角 ---------- */
+$('btnResetView').addEventListener('click', () => {
+  controls.reset();
+  toast('视角已重置');
+});
+
+/* ---------- 半透明透视 ---------- */
+const xrayBackup = new Map();
+$('btnXRay').addEventListener('click', () => {
+  if (!modelRoot) return;
+  state.xrayOn = !state.xrayOn;
+  $('btnXRay').classList.toggle('active', state.xrayOn);
+  modelRoot.traverse(o => {
+    if (!o.isMesh || o.userData.isAddon) return; // 附加特效不透明化
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach(m => {
+      if (state.xrayOn) {
+        if (!xrayBackup.has(m)) {
+          xrayBackup.set(m, {
+            transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite
+          });
+        }
+        m.transparent = true;
+        m.opacity = CONFIG.xray.opacity;
+        m.depthWrite = CONFIG.xray.depthWrite;
+      } else if (xrayBackup.has(m)) {
+        const b = xrayBackup.get(m);
+        m.transparent = b.transparent;
+        m.opacity = b.opacity;
+        m.depthWrite = b.depthWrite;
+      }
+    });
+  });
+  if (!state.xrayOn) xrayBackup.clear();
+  toast(state.xrayOn ? '透视模式：可观察内部结构' : '已恢复实体外观');
+});
+
+/* ---------- 引擎启停 ---------- */
+$('btnEngine').addEventListener('click', () => {
+  state.engineOn = !state.engineOn;
+  $('btnEngine').classList.toggle('active', state.engineOn);
+  $('btnEngine').textContent = state.engineOn ? '关闭引擎' : '启动引擎';
+  toast(state.engineOn
+    ? `引擎启动（匹配到 ${matched.rotators.length} 个旋转节点、${matched.engineCenters.length} 个喷口）`
+    : '引擎已关闭，转速与尾焰将逐渐衰减');
+});
+
+/* ---------- 起落架收放 ---------- */
+$('btnGear').addEventListener('click', () => {
+  if (!matched.gears.length) return;
+  state.gearRetracted = !state.gearRetracted;
+  $('btnGear').classList.toggle('active', state.gearRetracted);
+  $('btnGear').textContent = state.gearRetracted ? '放下起落架' : '收起起落架';
+  toast(state.gearRetracted ? '起落架收起中…' : '起落架放下中…');
+});
+
+/* ---------- 航行灯开关 ---------- */
+$('btnNavLight').addEventListener('click', () => {
+  state.navLightOn = !state.navLightOn;
+  if (matched.navLights.group) matched.navLights.group.visible = state.navLightOn;
+  $('btnNavLight').classList.toggle('active', state.navLightOn);
+  $('btnNavLight').textContent = state.navLightOn ? '航行灯 开' : '航行灯 关';
+  toast('航行灯已' + (state.navLightOn ? '开启（左红右绿 + 尾部频闪）' : '关闭'));
+});
+
+/* ---------- 飞行姿态演示 ---------- */
+$('btnFlightDemo').addEventListener('click', () => {
+  state.demoOn = !state.demoOn;
+  state.leveling = false;
+  $('btnFlightDemo').classList.toggle('active', state.demoOn);
+  $('btnFlightDemo').textContent = state.demoOn ? '停止演示' : '开始演示';
+  toast(state.demoOn ? '姿态演示：俯仰 / 滚转 / 偏航循环' : '演示已停止（保持当前姿态，可一键回正）');
+});
+$('btnLevel').addEventListener('click', () => {
+  state.demoOn = false;
+  state.leveling = true;
+  $('btnFlightDemo').classList.remove('active');
+  $('btnFlightDemo').textContent = '开始演示';
+  toast('正在回正…');
+});
+
+/* ---------- 帮助弹层 ---------- */
+$('btnHelp').addEventListener('click', () => $('help').classList.add('show'));
+$('helpClose').addEventListener('click', () => $('help').classList.remove('show'));
+$('help').addEventListener('click', e => { if (e.target === $('help')) $('help').classList.remove('show'); });
+
+/* ---------- 窗口自适应 ---------- */
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ============================================================================
+ * ============================  每帧动画循环  =================================
+ * ========================================================================== */
+const clock = new THREE.Clock();
+const spinAxisMap = { x: 'x', y: 'y', z: 'z' };
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  /* ---- 引擎：转速平滑加减速 + 叶片旋转 ---- */
+  const targetSpin = state.engineOn ? CONFIG.engine.spinSpeed : 0;
+  state.spinSpeed += (targetSpin - state.spinSpeed) *
+    Math.min(1, dt * CONFIG.engine.accel);
+  const axis = spinAxisMap[CONFIG.engine.spinAxis] || 'z';
+  matched.rotators.forEach(r => {
+    r.rotation[axis] += state.spinSpeed * dt;
+  });
+
+  /* ---- 喷口光晕：开关淡入淡出 + 脉动 ---- */
+  matched.nozzleSprites.forEach(s => {
+    const target = state.engineOn ? 0.85 : 0;
+    s.material.opacity += (target - s.material.opacity) * Math.min(1, dt * 4);
+    s.visible = s.material.opacity > 0.02;
+    if (s.visible) {
+      const pulse = 1 + 0.18 * Math.sin(t * 22);
+      s.scale.setScalar(modelSize * CONFIG.engine.glowScale * pulse);
+    }
+  });
+
+  /* ---- 尾焰粒子 ---- */
+  matched.particleSystems.forEach(sys => {
+    const targetOpacity = state.engineOn ? 0.9 : 0;
+    sys.mat.opacity += (targetOpacity - sys.mat.opacity) * Math.min(1, dt * 4);
+    sys.points.visible = sys.mat.opacity > 0.02;
+    if (!sys.points.visible) return;
+    for (let i = 0; i < CONFIG.engine.particleCount; i++) {
+      sys.lives[i] += dt;
+      if (sys.lives[i] >= CONFIG.engine.particleLife) {
+        if (state.engineOn) resetParticle(sys, i);
+        else sys.lives[i] = CONFIG.engine.particleLife; // 关停后不再重生
+      }
+      if (state.engineOn || sys.lives[i] < CONFIG.engine.particleLife) {
+        sys.positions[i * 3] += sys.velocities[i].x * dt;
+        sys.positions[i * 3 + 1] += sys.velocities[i].y * dt;
+        sys.positions[i * 3 + 2] += sys.velocities[i].z * dt;
+      }
+    }
+    sys.points.geometry.attributes.position.needsUpdate = true;
+  });
+
+  /* ---- 起落架收放 ---- */
+  updateGear(dt);
+
+  /* ---- 航行灯：翼灯呼吸 + 尾灯双闪频闪 ---- */
+  if (state.navLightOn) {
+    const pulse = 0.55 + 0.45 * Math.sin(t * CONFIG.navLight.pulseSpeed);
+    if (matched.navLights.red) matched.navLights.red.material.emissiveIntensity = pulse * 2.2;
+    if (matched.navLights.green) matched.navLights.green.material.emissiveIntensity = pulse * 2.2;
+    // 双闪：每个周期内快速亮两次
+    const phase = (t % CONFIG.navLight.strobeInterval) / CONFIG.navLight.strobeInterval;
+    const flash1 = phase < 0.08 ? 1 : 0;
+    const flash2 = (phase > 0.16 && phase < 0.24) ? 1 : 0;
+    if (matched.navLights.tail) {
+      matched.navLights.tail.material.emissiveIntensity = (flash1 || flash2) * 3.0;
+    }
+  }
+
+  /* ---- 飞行姿态演示 / 一键回正 ---- */
+  if (state.demoOn) {
+    const f = CONFIG.flightDemo;
+    flightGroup.rotation.x = Math.sin(t * f.pitchSpeed) * f.pitchAmp;  // 俯仰
+    flightGroup.rotation.z = Math.sin(t * f.rollSpeed) * f.rollAmp;    // 滚转
+    flightGroup.rotation.y = Math.sin(t * f.yawSpeed) * f.yawAmp;      // 偏航
+  } else if (state.leveling) {
+    const k = Math.min(1, dt * CONFIG.flightDemo.levelDamping);
+    flightGroup.rotation.x += (0 - flightGroup.rotation.x) * k;
+    flightGroup.rotation.y += (0 - flightGroup.rotation.y) * k;
+    flightGroup.rotation.z += (0 - flightGroup.rotation.z) * k;
+    const e = flightGroup.rotation;
+    if (Math.abs(e.x) + Math.abs(e.y) + Math.abs(e.z) < 1e-4) {
+      flightGroup.rotation.set(0, 0, 0);
+      state.leveling = false;
+      toast('姿态已回正');
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+/* ============================================================================
+ * ==============================  启动  ======================================
+ * ========================================================================== */
+startLoad();
+animate();
+</script>
+</body>
+</html>
